@@ -1,7 +1,7 @@
 # EvidenceIQ: AI Investigation Command Center
 
 <p align="center">
-  <img src="assets/evidenceiq-logo.svg" alt="EvidenceIQ logo" width="720">
+  <img src="https://raw.githubusercontent.com/theadhithyankr/ai-investigation-command-center/main/assets/evidenceiq-logo.svg" alt="EvidenceIQ logo" width="720">
 </p>
 
 EvidenceIQ is a local-first AI investigation workspace that turns messy evidence
@@ -22,8 +22,10 @@ supporting sources, and export a professional memo.
 - **Memo Generator**: export a citation-backed investigation brief.
 
 <p align="center">
-  <img src="assets/evidenceiq-architecture.svg" alt="EvidenceIQ architecture diagram" width="860">
+  <img src="https://raw.githubusercontent.com/theadhithyankr/ai-investigation-command-center/main/assets/evidenceiq-architecture.svg" alt="EvidenceIQ architecture diagram" width="860">
 </p>
+
+Direct asset links: [logo SVG](assets/evidenceiq-logo.svg) · [architecture SVG](assets/evidenceiq-architecture.svg)
 
 ## Why This Project Stands Out
 
