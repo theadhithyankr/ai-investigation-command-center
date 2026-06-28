@@ -4,6 +4,7 @@ from pathlib import Path
 
 from evidenceiq.agents import InvestigationAgent
 from evidenceiq.entities import extract_entities
+from evidenceiq.llm import build_answer_prompt
 from evidenceiq.parsing import deduplicate, parse_date, parse_text_file
 from evidenceiq.pipeline import build_case_from_folder
 from evidenceiq.search import EvidenceSearch
@@ -12,6 +13,25 @@ from evidenceiq.storage import EvidenceStore
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "data" / "sample_case"
+
+
+class SpyLLM:
+    model = "test-model"
+
+    def __init__(self, answer_text="Enhanced answer [ev-001]"):
+        self.answer_text = answer_text
+        self.answer_calls = []
+        self.memo_calls = []
+
+    def answer(self, question, evidence):
+        self.answer_calls.append((question, evidence))
+        evidence_id = evidence[0].evidence.id if evidence else "ev-001"
+        return self.answer_text.replace("ev-001", evidence_id)
+
+    def memo(self, case_name, evidence, risks, timeline):
+        self.memo_calls.append((case_name, evidence, risks, timeline))
+        citation_id = evidence[0].evidence_id if evidence else "ev-001"
+        return f"# Enhanced Memo\n\n## Key Findings\n- Finding supported by evidence [{citation_id}]"
 
 
 class EvidenceIQTests(unittest.TestCase):
@@ -51,12 +71,57 @@ class EvidenceIQTests(unittest.TestCase):
         self.assertEqual(answer.confidence, "none")
         self.assertFalse(answer.citations)
 
+    def test_agent_uses_deterministic_fallback_without_llm(self):
+        case = build_case_from_folder(SAMPLE)
+        answer = InvestigationAgent(case).answer("What connects Maya Rao to Northstar Energy?")
+        self.assertIn("Based only on retrieved evidence", answer.answer)
+        self.assertTrue(answer.citations)
+
     def test_agent_refuses_legal_conclusions(self):
         case = build_case_from_folder(SAMPLE)
         answer = InvestigationAgent(case).answer("Did EvidenceIQ find proof of fraud?")
         self.assertEqual(answer.confidence, "none")
         self.assertIn("cannot determine", answer.answer)
         self.assertFalse(answer.citations)
+
+    def test_refusals_happen_before_llm_calls(self):
+        case = build_case_from_folder(SAMPLE)
+        llm = SpyLLM()
+        InvestigationAgent(case, llm).answer("Did EvidenceIQ find proof of fraud?")
+        InvestigationAgent(case, llm).answer("Evidence about a spaceship vendor")
+        self.assertFalse(llm.answer_calls)
+
+    def test_groq_prompt_contains_only_retrieved_excerpts_and_citation_ids(self):
+        case = build_case_from_folder(SAMPLE)
+        results = EvidenceSearch(case.items).search("Northstar Energy side letter", limit=2)
+        payload = build_answer_prompt("What happened?", results)
+        for result in results:
+            self.assertIn(f"[{result.evidence.id}]", payload.user)
+            self.assertIn(result.excerpt, payload.user)
+            self.assertNotIn(result.evidence.body, payload.user)
+
+    def test_llm_answer_missing_citation_ids_is_downgraded_to_fallback(self):
+        case = build_case_from_folder(SAMPLE)
+        llm = SpyLLM("Enhanced answer without citations")
+        answer = InvestigationAgent(case, llm).answer("What connects Maya Rao to Northstar Energy?")
+        self.assertIn("Based only on retrieved evidence", answer.answer)
+        self.assertTrue(llm.answer_calls)
+
+    def test_llm_answer_with_unknown_citation_id_is_downgraded_to_fallback(self):
+        case = build_case_from_folder(SAMPLE)
+        llm = SpyLLM("Enhanced answer [ev-not-real]")
+        answer = InvestigationAgent(case, llm).answer("What connects Maya Rao to Northstar Energy?")
+        self.assertIn("Based only on retrieved evidence", answer.answer)
+        self.assertTrue(llm.answer_calls)
+
+    def test_memo_fallback_and_enhanced_generation(self):
+        case = build_case_from_folder(SAMPLE)
+        fallback = InvestigationAgent(case).generate_llm_memo("Aster Bridge")
+        self.assertIn("# Aster Bridge Investigation Memo", fallback)
+        llm = SpyLLM()
+        enhanced = InvestigationAgent(case, llm).generate_llm_memo("Aster Bridge")
+        self.assertIn("# Enhanced Memo", enhanced)
+        self.assertTrue(llm.memo_calls)
 
     def test_timeline_separates_unknown_dates(self):
         case = build_case_from_folder(SAMPLE)

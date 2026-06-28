@@ -83,6 +83,21 @@ http://localhost:8501
 The implementation is intentionally zero-budget. Optional heavier NLP/LLM
 components can be added later behind the same tool interfaces.
 
+## Optional Groq Setup
+
+EvidenceIQ can use Groq for richer cited answers and enhanced memo drafting.
+Retrieval, citations, unsupported-question refusal, and legal-conclusion refusal
+remain local guardrails. If Groq is not configured or an API call fails, the app
+falls back to deterministic local output.
+
+1. Copy `.env.example` to `.env` and set `GROQ_API_KEY`.
+2. Optionally set `GROQ_MODEL`; the default is `llama-3.1-8b-instant`.
+3. Install dependencies with `pip install -r requirements.txt`.
+
+For Streamlit Community Cloud, add `GROQ_API_KEY` and optional `GROQ_MODEL` under
+the app's secrets/settings instead of committing keys. Groq availability, models,
+rate limits, and usage terms depend on your Groq account and current Groq terms.
+
 ## Project Structure
 
 ```text
