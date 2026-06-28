@@ -1,0 +1,4 @@
+Subject: Missing date source
+
+Maya Rao and Leo Grant both appear in this copied note, but the original timestamp is missing.
+Treat this as unknown-date evidence until verified.

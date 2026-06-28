@@ -1,0 +1,4 @@
+streamlit>=1.36
+plotly>=5.22
+networkx>=3.3
+pypdf>=4.2
