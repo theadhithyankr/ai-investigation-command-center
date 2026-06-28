@@ -25,10 +25,10 @@ def load_case():
     return build_case_from_folder(ROOT / "data" / "sample_case")
 
 
-if "items" not in st.session_state:
-    st.session_state.items = load_case().items
+if "evidence_items" not in st.session_state:
+    st.session_state["evidence_items"] = load_case().items
 
-case = InvestigationCase(st.session_state.items)
+case = InvestigationCase(st.session_state["evidence_items"])
 agent = InvestigationAgent(case)
 search = EvidenceSearch(case.items)
 
@@ -63,9 +63,9 @@ with tab_search:
             except ValueError as exc:
                 errors.append(f"{file.name}: {exc}")
         if parsed:
-            st.session_state.items = enrich_entities(deduplicate(case.items + parsed))
+            st.session_state["evidence_items"] = enrich_entities(deduplicate(case.items + parsed))
             store = EvidenceStore(ROOT / "data" / "local" / "evidence.sqlite")
-            inserted = store.upsert_many(st.session_state.items)
+            inserted = store.upsert_many(st.session_state["evidence_items"])
             st.success(f"Loaded {len(parsed)} uploaded evidence items. SQLite inserted {inserted} new records.")
             st.rerun()
         for error in errors:
