@@ -2,7 +2,7 @@
 
 ## Project Name
 
-EvidenceIQ: Agentic AI Investigation Command Center
+EvidenceIQ: AI Investigation Command Center
 
 ## Problem
 

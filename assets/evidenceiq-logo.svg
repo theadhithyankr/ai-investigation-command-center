@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">EvidenceIQ: AI Investigation Command Center</title>
+  <desc id="desc">A clean product banner for an AI investigation intelligence platform.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="0.48" stop-color="#164e63"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1">
+      <stop offset="0" stop-color="#22c55e"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="360" rx="28" fill="url(#bg)"/>
+  <g opacity="0.18">
+    <path d="M0 280 C180 210 300 320 480 240 S780 120 1200 210" fill="none" stroke="#e0f2fe" stroke-width="2"/>
+    <path d="M0 120 C180 180 310 80 520 150 S870 250 1200 110" fill="none" stroke="#bbf7d0" stroke-width="2"/>
+  </g>
+  <g transform="translate(86 76)" filter="url(#shadow)">
+    <rect x="0" y="0" width="190" height="190" rx="34" fill="#f8fafc"/>
+    <path d="M52 124 L86 62 L122 124 Z" fill="none" stroke="#0f766e" stroke-width="12" stroke-linejoin="round"/>
+    <circle cx="86" cy="62" r="13" fill="#22c55e"/>
+    <circle cx="52" cy="124" r="13" fill="#38bdf8"/>
+    <circle cx="122" cy="124" r="13" fill="#38bdf8"/>
+    <path d="M132 137 L158 163" stroke="#0f172a" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="122" cy="126" r="38" fill="none" stroke="#0f172a" stroke-width="12"/>
+  </g>
+  <g transform="translate(320 92)">
+    <text x="0" y="54" fill="#f8fafc" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="56" font-weight="800">EvidenceIQ</text>
+    <text x="0" y="104" fill="#bae6fd" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="650">AI Investigation Command Center</text>
+    <text x="0" y="157" fill="#e2e8f0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24">Evidence search, entity graphs, timelines, risk signals, and cited memos.</text>
+    <g transform="translate(0 204)" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">
+      <rect x="0" y="-28" width="142" height="42" rx="21" fill="url(#accent)"/>
+      <text x="22" y="0" fill="#052e16">Local First</text>
+      <rect x="160" y="-28" width="170" height="42" rx="21" fill="#e0f2fe"/>
+      <text x="183" y="0" fill="#0f172a">Citation Backed</text>
+      <rect x="350" y="-28" width="142" height="42" rx="21" fill="#dcfce7"/>
+      <text x="373" y="0" fill="#0f172a">No Paid APIs</text>
+    </g>
+  </g>
+</svg>

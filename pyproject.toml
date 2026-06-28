@@ -1,7 +1,7 @@
 [project]
 name = "evidenceiq"
 version = "0.1.0"
-description = "Agentic AI investigation command center with citation-backed evidence intelligence."
+description = "AI investigation command center with citation-backed evidence intelligence."
 requires-python = ">=3.11"
 dependencies = []
 
