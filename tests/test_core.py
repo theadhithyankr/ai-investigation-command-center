@@ -3,9 +3,10 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 
 from evidenceiq.agents import InvestigationAgent
-from evidenceiq.entities import extract_entities
+from evidenceiq.case import InvestigationCase
+from evidenceiq.entities import enrich_entities, extract_entities
 from evidenceiq.llm import build_answer_prompt
-from evidenceiq.parsing import deduplicate, parse_date, parse_text_file
+from evidenceiq.parsing import create_manual_evidence, deduplicate, parse_date, parse_text_file
 from evidenceiq.pipeline import build_case_from_folder
 from evidenceiq.search import EvidenceSearch
 from evidenceiq.storage import EvidenceStore
@@ -145,11 +146,184 @@ class EvidenceIQTests(unittest.TestCase):
         case = build_case_from_folder(SAMPLE)
         with TemporaryDirectory() as temp_dir:
             store = EvidenceStore(Path(temp_dir) / "test_evidence.sqlite")
-            inserted = store.upsert_many(case.items)
-            loaded = store.all()
+            record = store.create_case("Round Trip")
+            inserted = store.upsert_many(record.id, case.items)
+            loaded = store.all(record.id)
         self.assertEqual(inserted, len(case.items))
         self.assertEqual(len(loaded), len(case.items))
         self.assertTrue(loaded[0].entities)
+
+    def test_store_isolates_evidence_by_case_id(self):
+        item = parse_text_file(SAMPLE / "01_email.txt")
+        with TemporaryDirectory() as temp_dir:
+            store = EvidenceStore(Path(temp_dir) / "test_evidence.sqlite")
+            one = store.create_case("Case One")
+            two = store.create_case("Case Two")
+            self.assertEqual(store.upsert_many(one.id, [item]), 1)
+            self.assertEqual(store.upsert_many(two.id, [item]), 1)
+            self.assertEqual(len(store.all(one.id)), 1)
+            self.assertEqual(len(store.all(two.id)), 1)
+
+    def test_seed_sample_case_is_idempotent(self):
+        with TemporaryDirectory() as temp_dir:
+            store = EvidenceStore(Path(temp_dir) / "test_evidence.sqlite")
+            first = store.seed_sample_case(SAMPLE)
+            first_count = len(store.all(first.id))
+            second = store.seed_sample_case(SAMPLE)
+            second_count = len(store.all(second.id))
+        self.assertEqual(first.id, second.id)
+        self.assertEqual(first_count, second_count)
+        self.assertGreater(first_count, 0)
+
+    def test_manual_evidence_round_trips_with_entities(self):
+        manual = create_manual_evidence(
+            "Witness statement",
+            "witness_note",
+            "Maya Rao met Leo Grant near Northstar Energy. Keep confidential.",
+            source_person="Jordan Lee",
+            tags=["witness", "murder"],
+        )
+        enrich_entities([manual])
+        with TemporaryDirectory() as temp_dir:
+            store = EvidenceStore(Path(temp_dir) / "test_evidence.sqlite")
+            record = store.create_case("Manual Case")
+            store.upsert_many(record.id, [manual])
+            loaded = store.all(record.id)
+        self.assertEqual(loaded[0].source_type, "witness_note")
+        self.assertIn("Maya Rao", loaded[0].entities["people"])
+        self.assertIn("confidential", loaded[0].entities["risk_terms"])
+
+    def test_custom_case_answer_uses_only_selected_case_evidence(self):
+        northstar = create_manual_evidence(
+            "Northstar note",
+            "report",
+            "Maya Rao discussed Northstar Energy with Leo Grant.",
+        )
+        unrelated = create_manual_evidence(
+            "Warehouse note",
+            "scene_note",
+            "A witness saw Jordan Lee at the warehouse.",
+        )
+        enrich_entities([northstar, unrelated])
+        case_one = InvestigationCase([northstar])
+        case_two = InvestigationCase([unrelated])
+        supported = InvestigationAgent(case_one).answer("What connects Maya Rao to Northstar Energy?")
+        unsupported = InvestigationAgent(case_two).answer("What connects Maya Rao to Northstar Energy?")
+        self.assertTrue(supported.citations)
+        self.assertEqual(unsupported.confidence, "none")
+        self.assertEqual(unsupported.fallback_reason, "unsupported_question")
+
+    def test_groq_not_called_when_case_llm_disabled(self):
+        case = build_case_from_folder(SAMPLE)
+        llm = SpyLLM()
+        agent = InvestigationAgent(case, None)
+        answer = agent.answer("What connects Maya Rao to Northstar Energy?")
+        self.assertFalse(llm.answer_calls)
+        self.assertEqual(answer.mode, "local")
+
+    def test_groq_citation_rejection_reports_fallback_reason(self):
+        case = build_case_from_folder(SAMPLE)
+        llm = SpyLLM("Enhanced answer without citations")
+        answer = InvestigationAgent(case, llm).answer("What connects Maya Rao to Northstar Energy?")
+        self.assertEqual(answer.mode, "local")
+        self.assertEqual(answer.fallback_reason, "groq_invalid_citations")
+
+    def test_manual_murder_case_note_with_unknown_date_is_unknown(self):
+        manual = create_manual_evidence(
+            "Witness heard argument",
+            "witness_note",
+            "Jordan Lee heard an argument behind the scene entrance.",
+            date_value=None,
+            source_person="Pat Morgan",
+        )
+        case = InvestigationCase(enrich_entities([manual]))
+        known, unknown = case.timeline()
+        self.assertFalse(known)
+        self.assertEqual(unknown[0].title, "Witness heard argument")
+
+    def test_deduplicate_removes_manual_and_uploaded_duplicate_within_case(self):
+        uploaded = parse_text_file(SAMPLE / "03_note.txt")
+        manual = create_manual_evidence(uploaded.title, uploaded.source_type, uploaded.body, source_person=uploaded.source)
+        manual.content_hash = uploaded.content_hash
+        self.assertEqual(len(deduplicate([uploaded, manual])), 1)
+
+    def test_memo_includes_custom_case_citations(self):
+        manual = create_manual_evidence(
+            "Scene report",
+            "scene_note",
+            "Maya Rao noted a confidential side letter at Northstar Energy.",
+        )
+        case = InvestigationCase(enrich_entities([manual]))
+        memo = InvestigationAgent(case).memo("Custom Case")
+        self.assertIn(manual.id, memo)
+
+    def test_leadboard_ranks_people_by_cited_investigative_signals(self):
+        scene = create_manual_evidence(
+            "Scene statement",
+            "scene_note",
+            "Jordan Lee met Maya Rao near the loading bay. Keep confidential.",
+            source_person="Pat Morgan",
+        )
+        interview = create_manual_evidence(
+            "Interview follow-up",
+            "interview",
+            "Jordan Lee discussed the side letter with Northstar Energy.",
+            date_value="2026-02-04",
+            source_person="Case Analyst",
+        )
+        background = create_manual_evidence(
+            "Background note",
+            "other",
+            "Maya Rao attended a planning meeting.",
+        )
+        case = InvestigationCase(enrich_entities([scene, interview, background]))
+        leads = case.leadboard()
+        self.assertTrue(leads)
+        self.assertEqual(leads[0].name, "Jordan Lee")
+        self.assertGreater(leads[0].score, leads[-1].score)
+        self.assertTrue(leads[0].citations)
+
+    def test_leadboard_reasons_refuse_culprit_finding(self):
+        note = create_manual_evidence(
+            "Witness note",
+            "witness_note",
+            "Jordan Lee was named by a witness.",
+        )
+        case = InvestigationCase(enrich_entities([note]))
+        lead = case.leadboard()[0]
+        self.assertTrue(any("not a guilt" in reason for reason in lead.reasons))
+
+    def test_leadboard_filters_non_person_phrases_and_victim(self):
+        report = create_manual_evidence(
+            "Internal Budget review",
+            "report",
+            (
+                "Meridian Biologics reported that victim Elena Voss was found in Lab 3B. "
+                "Finance Officer reviewed an Internal Budget memo. Marcus Hale argued with Priya Nair "
+                "near the rear entrance and told Owen Vale to delete footage."
+            ),
+            date_value="2026-02-04",
+            source_person="Case Analyst",
+        )
+        case = InvestigationCase(enrich_entities([report]))
+        names = [lead.name for lead in case.leadboard()]
+        self.assertIn("Marcus Hale", names)
+        self.assertIn("Priya Nair", names)
+        self.assertIn("Owen Vale", names)
+        self.assertNotIn("Meridian Biologics", names)
+        self.assertNotIn("Finance Officer", names)
+        self.assertNotIn("Internal Budget", names)
+        self.assertNotIn("Elena Voss", names)
+
+    def test_leadboard_scores_do_not_saturate_for_single_item(self):
+        note = create_manual_evidence(
+            "Scene note",
+            "scene_note",
+            "Marcus Hale met Priya Nair at Lab 3B. Keep confidential.",
+            date_value="2026-02-04",
+        )
+        case = InvestigationCase(enrich_entities([note]))
+        self.assertTrue(all(lead.score < 100 for lead in case.leadboard()))
 
 
 if __name__ == "__main__":

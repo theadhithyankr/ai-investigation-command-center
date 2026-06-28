@@ -5,6 +5,17 @@ from datetime import datetime
 
 
 @dataclass(frozen=True)
+class CaseRecord:
+    id: str
+    name: str
+    case_type: str
+    description: str
+    created_at: datetime
+    updated_at: datetime
+    llm_enabled: bool = False
+
+
+@dataclass(frozen=True)
 class Citation:
     evidence_id: str
     title: str
@@ -48,8 +59,32 @@ class RiskSignal:
 
 
 @dataclass(frozen=True)
+class PersonLead:
+    name: str
+    priority: str
+    score: int
+    evidence_count: int
+    risk_proximity: int
+    timeline_proximity: int
+    scene_proximity: int
+    relationship_density: int
+    unresolved_items: int
+    reasons: tuple[str, ...]
+    citations: tuple[Citation, ...]
+
+
+@dataclass(frozen=True)
 class AgentAnswer:
     question: str
     answer: str
     confidence: str
     citations: tuple[Citation, ...]
+    mode: str = "local"
+    fallback_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class MemoResult:
+    memo: str
+    mode: str
+    fallback_reason: str | None = None

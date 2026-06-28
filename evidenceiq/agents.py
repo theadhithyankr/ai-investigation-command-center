@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from evidenceiq.case import InvestigationCase
 from evidenceiq.llm import LLMClient, validate_cited_text
-from evidenceiq.models import AgentAnswer
+from evidenceiq.models import AgentAnswer, MemoResult
 from evidenceiq.search import EvidenceSearch
 
 
@@ -19,6 +19,8 @@ class InvestigationAgent:
                 "EvidenceIQ cannot determine guilt, fraud, criminality, or legal liability. It can only surface cited risk signals and investigation leads.",
                 "none",
                 (),
+                "refusal",
+                "legal_conclusion_refusal",
             )
         results = self.search_engine.search(question, limit=4)
         supported = [result for result in results if result.matched_terms or result.score >= 0.18]
@@ -28,6 +30,8 @@ class InvestigationAgent:
                 "No supporting evidence found. EvidenceIQ will not make an unsupported claim.",
                 "none",
                 (),
+                "refusal",
+                "unsupported_question",
             )
         citations = tuple(result.evidence.citation(result.excerpt) for result in supported)
         confidence = "high" if supported[0].score >= 0.5 and len(supported) >= 2 else "medium"
@@ -36,12 +40,15 @@ class InvestigationAgent:
             allowed_ids = {citation.evidence_id for citation in citations}
             validated = validate_cited_text(llm_answer, allowed_ids)
             if validated:
-                return AgentAnswer(question, validated, confidence, citations)
+                return AgentAnswer(question, validated, confidence, citations, "groq", None)
+            fallback_reason = "groq_invalid_citations" if llm_answer else "groq_unavailable_or_error"
+        else:
+            fallback_reason = "groq_not_configured_or_disabled"
         facts = []
         for result in supported[:3]:
             facts.append(f"- {result.excerpt} [{result.evidence.id}]")
         answer = "Based only on retrieved evidence:\n" + "\n".join(facts)
-        return AgentAnswer(question, answer, confidence, citations)
+        return AgentAnswer(question, answer, confidence, citations, "local", fallback_reason)
 
     def memo(self, case_name: str = "Investigation Case") -> str:
         known, unknown = self.case.timeline()
@@ -76,9 +83,12 @@ class InvestigationAgent:
         return "\n".join(lines)
 
     def generate_llm_memo(self, case_name: str = "Investigation Case") -> str:
+        return self.generate_memo_result(case_name).memo
+
+    def generate_memo_result(self, case_name: str = "Investigation Case") -> MemoResult:
         fallback = self.memo(case_name)
         if not self.llm_client:
-            return fallback
+            return MemoResult(fallback, "local", "groq_not_configured_or_disabled")
         known, _unknown = self.case.timeline()
         risks = self.case.risk_signals()[:5]
         evidence = []
@@ -99,7 +109,10 @@ class InvestigationAgent:
         timeline_lines = [f"- {item.timestamp.date()}: {item.title} [{item.id}]" for item in known[:6]]
         llm_memo = self.llm_client.memo(case_name, evidence, risk_lines, timeline_lines)
         validated = validate_cited_text(llm_memo, {citation.evidence_id for citation in evidence})
-        return validated or fallback
+        if validated:
+            return MemoResult(validated, "groq", None)
+        reason = "groq_invalid_citations" if llm_memo else "groq_unavailable_or_error"
+        return MemoResult(fallback, "local", reason)
 
 
 def asks_for_legal_conclusion(question: str) -> bool:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from evidenceiq.models import Citation, SearchResult
@@ -35,8 +36,8 @@ class PromptPayload:
 
 class GroqLLMClient:
     def __init__(self, api_key: str | None = None, model: str | None = None, timeout: float = 12.0):
-        self.api_key = api_key or os.getenv("GROQ_API_KEY", "")
-        requested_model = model or os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL)
+        self.api_key = api_key or _env_value("GROQ_API_KEY", "")
+        requested_model = model or _env_value("GROQ_MODEL", DEFAULT_GROQ_MODEL)
         self.model = requested_model if requested_model in SAFE_GROQ_MODELS else DEFAULT_GROQ_MODEL
         self.timeout = timeout
 
@@ -128,3 +129,20 @@ def _extract_citation_ids(text: str) -> set[str]:
     for bracketed in re.findall(r"\[([^\]]+)\]", text):
         ids.update(part.strip() for part in re.split(r"[,;\s]+", bracketed) if part.strip())
     return ids
+
+
+def _env_value(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value:
+        return value
+    for env_path in (Path.cwd() / ".env", Path(__file__).resolve().parents[1] / ".env"):
+        if not env_path.exists():
+            continue
+        for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, raw_value = stripped.split("=", 1)
+            if key.strip() == name:
+                return raw_value.strip().strip('"').strip("'")
+    return default

@@ -127,6 +127,39 @@ def parse_uploaded_bytes(name: str, data: bytes) -> list[EvidenceItem]:
         temp_path.unlink(missing_ok=True)
 
 
+def create_manual_evidence(
+    title: str,
+    evidence_type: str,
+    body: str,
+    *,
+    date_value: str | None = None,
+    source_person: str | None = None,
+    tags: list[str] | None = None,
+) -> EvidenceItem:
+    clean_title = title.strip() or "Untitled note"
+    clean_body = body.strip()
+    clean_source = source_person.strip() if source_person else "Manual entry"
+    clean_tags = [tag.strip() for tag in tags or [] if tag.strip()]
+    metadata = [
+        f"Type: {evidence_type}",
+        f"Source/person: {clean_source}",
+    ]
+    if clean_tags:
+        metadata.append(f"Tags: {', '.join(clean_tags)}")
+    full_body = "\n".join(metadata + ["", clean_body]).strip()
+    item = EvidenceItem(
+        id=stable_id(f"manual:{clean_title}:{clean_source}", full_body),
+        source=clean_source,
+        source_type=evidence_type.strip() or "manual_note",
+        title=clean_title,
+        body=full_body,
+        timestamp=parse_date(date_value),
+        sender=clean_source if clean_source != "Manual entry" else None,
+    )
+    item.content_hash = content_hash(item.body)
+    return item
+
+
 def parse_pdf_file(path: Path) -> EvidenceItem:
     try:
         from pypdf import PdfReader
