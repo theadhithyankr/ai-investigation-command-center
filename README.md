@@ -51,14 +51,14 @@ Most AI demos stop at chat. EvidenceIQ behaves like an investigation product:
 ## Quick Start
 
 ```powershell
-cd C:\Users\aswin\documents\evidenceiq
+cd evidenceiq
 python -m evidenceiq.demo
 ```
 
 ## Run The Product UI
 
 ```powershell
-cd C:\Users\aswin\documents\evidenceiq
+cd evidenceiq
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\scripts\start_evidenceiq.ps1
