@@ -9,7 +9,6 @@ from typing import Protocol
 
 from evidenceiq.entities import is_plausible_person_name
 from evidenceiq.models import Citation, SearchResult
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
@@ -39,31 +38,6 @@ class PromptPayload:
     system: str
     user: str
     json_mode: bool = False
-
-
-class EntityExtractionSchema(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    people: list[str] = Field(default_factory=list)
-    organizations: list[str] = Field(default_factory=list)
-    locations: list[str] = Field(default_factory=list)
-    roles: list[str] = Field(default_factory=list)
-    victims: list[str] = Field(default_factory=list)
-    dates: list[str] = Field(default_factory=list)
-    money: list[str] = Field(default_factory=list)
-    risk_terms: list[str] = Field(default_factory=list)
-    forensic_concepts: list[str] = Field(default_factory=list)
-
-    @field_validator("*", mode="before")
-    @classmethod
-    def _list_of_strings(cls, value):
-        if value is None:
-            return []
-        if isinstance(value, str):
-            value = [value]
-        if not isinstance(value, list):
-            return []
-        return [str(item).strip() for item in value if str(item).strip()]
 
 
 class GroqLLMClient:
@@ -188,25 +162,22 @@ def parse_entity_response(text: str | None) -> dict[str, list[str]] | None:
         return None
     if not isinstance(raw, dict):
         return None
-    try:
-        parsed = EntityExtractionSchema.model_validate(raw)
-    except Exception:
-        return None
+    parsed = _coerce_entity_schema(raw)
     entities = {
-        "people": sorted(set(parsed.people)),
-        "organizations": sorted(set(parsed.organizations)),
-        "locations": sorted(set(parsed.locations)),
-        "roles": sorted(set(parsed.roles)),
-        "victims": sorted(set(parsed.victims)),
-        "dates": sorted(set(parsed.dates)),
-        "money": sorted(set(parsed.money)),
-        "risk_terms": sorted(set(parsed.risk_terms)),
+        "people": sorted(set(parsed["people"])),
+        "organizations": sorted(set(parsed["organizations"])),
+        "locations": sorted(set(parsed["locations"])),
+        "roles": sorted(set(parsed["roles"])),
+        "victims": sorted(set(parsed["victims"])),
+        "dates": sorted(set(parsed["dates"])),
+        "money": sorted(set(parsed["money"])),
+        "risk_terms": sorted(set(parsed["risk_terms"])),
     }
     non_people = (
-        set(parsed.organizations)
-        | set(parsed.locations)
-        | set(parsed.roles)
-        | set(parsed.forensic_concepts)
+        set(parsed["organizations"])
+        | set(parsed["locations"])
+        | set(parsed["roles"])
+        | set(parsed["forensic_concepts"])
     )
     entities["people"] = [
         person
@@ -219,6 +190,31 @@ def parse_entity_response(text: str | None) -> dict[str, list[str]] | None:
     ]
     entities["victims"] = [victim for victim in entities["victims"] if len(victim.split()) >= 2]
     return entities
+
+
+def _coerce_entity_schema(raw: dict) -> dict[str, list[str]]:
+    keys = (
+        "people",
+        "organizations",
+        "locations",
+        "roles",
+        "victims",
+        "dates",
+        "money",
+        "risk_terms",
+        "forensic_concepts",
+    )
+    return {key: _coerce_string_list(raw.get(key, [])) for key in keys}
+
+
+def _coerce_string_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def validate_cited_text(text: str | None, allowed_ids: set[str]) -> str | None:
