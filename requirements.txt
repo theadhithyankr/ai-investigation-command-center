@@ -3,3 +3,4 @@ plotly>=5.22
 networkx>=3.3
 pypdf>=4.2
 groq>=0.9
+pydantic>=2

@@ -9,14 +9,15 @@ from typing import Protocol
 
 from evidenceiq.entities import is_plausible_person_name
 from evidenceiq.models import Citation, SearchResult
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 SAFE_GROQ_MODELS = (
-    "llama-3.1-8b-instant",
     "llama-3.3-70b-versatile",
-    "openai/gpt-oss-20b",
     "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "llama-3.1-8b-instant",
 )
 
 
@@ -37,6 +38,32 @@ class LLMClient(Protocol):
 class PromptPayload:
     system: str
     user: str
+    json_mode: bool = False
+
+
+class EntityExtractionSchema(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    people: list[str] = Field(default_factory=list)
+    organizations: list[str] = Field(default_factory=list)
+    locations: list[str] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
+    victims: list[str] = Field(default_factory=list)
+    dates: list[str] = Field(default_factory=list)
+    money: list[str] = Field(default_factory=list)
+    risk_terms: list[str] = Field(default_factory=list)
+    forensic_concepts: list[str] = Field(default_factory=list)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _list_of_strings(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
 
 
 class GroqLLMClient:
@@ -74,14 +101,17 @@ class GroqLLMClient:
             from groq import Groq
 
             client = Groq(api_key=self.api_key, timeout=self.timeout)
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=[
+            kwargs = {
+                "model": self.model,
+                "messages": [
                     {"role": "system", "content": payload.system},
                     {"role": "user", "content": payload.user},
                 ],
-                temperature=0.1,
-            )
+                "temperature": 0.1,
+            }
+            if payload.json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+            response = client.chat.completions.create(**kwargs)
             content = response.choices[0].message.content
         except Exception:
             return None
@@ -125,10 +155,15 @@ def build_entity_prompt(text: str) -> PromptPayload:
     return PromptPayload(
         system=(
             "Extract structured entities from investigation evidence. Return JSON only with keys: "
-            "people, organizations, locations, roles, victims, dates, money, risk_terms. "
+            "people, organizations, locations, roles, victims, dates, money, risk_terms, forensic_concepts. "
+            "Use this exact schema: "
+            '{"people":["Human Full Name"],"organizations":["Organization Name"],"locations":["Facility or Place"],'
+            '"roles":["Role Label"],"victims":["Human Full Name"],"dates":["Date Text"],"money":["Money Text"],'
+            '"risk_terms":["Exact Risk Term"],"forensic_concepts":["DNA Link"]}. '
             "People must be human full names only, not organizations, job titles, document titles, budgets, labs, or evidence types. "
             "Never classify churches, businesses, schools, or government bodies as people, even if they are mentioned in close proximity to a suspect's actions. "
             "Buildings, facilities, churches, businesses, schools, and government bodies belong in organizations or locations, never people. "
+            "Forensic ideas like DNA Link, fingerprint match, blood evidence, toxicology result, or weapon type belong in forensic_concepts, never people. "
             "Ignore document titles and headers when deciding people; phrases like Upstairs Guest, Guest Room, Second Street, or Scene Note are locations/titles, not people. "
             "Do not put physical evidence, relationship labels, descriptors, or official roles in people; examples: Failed Toxin, Family Friend, The Burned, Detective Seaver. "
             "If a phrase is a role like Finance Officer, Family Friend, Detective Seaver, or Security Contractor, put it in roles, not people. "
@@ -136,6 +171,7 @@ def build_entity_prompt(text: str) -> PromptPayload:
             "risk_terms must only include exact suspicious terms present in the text."
         ),
         user=f"Evidence text:\n{text[:6000]}\n\nJSON:",
+        json_mode=True,
     )
 
 
@@ -152,22 +188,32 @@ def parse_entity_response(text: str | None) -> dict[str, list[str]] | None:
         return None
     if not isinstance(raw, dict):
         return None
-    entities: dict[str, list[str]] = {}
-    for key in ("people", "organizations", "locations", "roles", "victims", "dates", "money", "risk_terms"):
-        value = raw.get(key, [])
-        if isinstance(value, str):
-            value = [value]
-        if not isinstance(value, list):
-            value = []
-        entities[key] = sorted({str(item).strip() for item in value if str(item).strip()})
+    try:
+        parsed = EntityExtractionSchema.model_validate(raw)
+    except Exception:
+        return None
+    entities = {
+        "people": sorted(set(parsed.people)),
+        "organizations": sorted(set(parsed.organizations)),
+        "locations": sorted(set(parsed.locations)),
+        "roles": sorted(set(parsed.roles)),
+        "victims": sorted(set(parsed.victims)),
+        "dates": sorted(set(parsed.dates)),
+        "money": sorted(set(parsed.money)),
+        "risk_terms": sorted(set(parsed.risk_terms)),
+    }
+    non_people = (
+        set(parsed.organizations)
+        | set(parsed.locations)
+        | set(parsed.roles)
+        | set(parsed.forensic_concepts)
+    )
     entities["people"] = [
         person
         for person in entities["people"]
         if (
             len(person.split()) >= 2
-            and person not in entities["organizations"]
-            and person not in entities["roles"]
-            and person not in entities["locations"]
+            and person not in non_people
             and is_plausible_person_name(person)
         )
     ]

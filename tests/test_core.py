@@ -12,7 +12,7 @@ from evidenceiq.entities import (
     is_plausible_person_name,
     leadable_people,
 )
-from evidenceiq.llm import build_answer_prompt, build_entity_prompt, parse_entity_response
+from evidenceiq.llm import DEFAULT_GROQ_MODEL, build_answer_prompt, build_entity_prompt, parse_entity_response
 from evidenceiq.parsing import (
     create_manual_evidence,
     deduplicate,
@@ -185,8 +185,33 @@ class EvidenceIQTests(unittest.TestCase):
 
     def test_entity_prompt_rejects_institutional_people(self):
         payload = build_entity_prompt("John Morse walked past Union Church.")
+        self.assertTrue(payload.json_mode)
         self.assertIn("Never classify churches, businesses, schools, or government bodies as people", payload.system)
         self.assertIn("belong in organizations or locations, never people", payload.system)
+
+    def test_groq_defaults_to_stronger_cloud_extraction_model(self):
+        self.assertEqual(DEFAULT_GROQ_MODEL, "llama-3.3-70b-versatile")
+
+    def test_structured_entity_schema_routes_forensic_concepts_out_of_people(self):
+        parsed = parse_entity_response(
+            """
+            {
+              "people": ["Joseph James", "DNA Link"],
+              "organizations": ["Irvine Police Department"],
+              "locations": ["Orange County"],
+              "roles": [],
+              "victims": [],
+              "dates": [],
+              "money": [],
+              "risk_terms": [],
+              "forensic_concepts": ["DNA Link"]
+            }
+            """
+        )
+
+        self.assertEqual(parsed["people"], ["Joseph James"])
+        self.assertIn("Irvine Police Department", parsed["organizations"])
+        self.assertIn("Orange County", parsed["locations"])
 
     def test_deduplicate_removes_duplicate_content(self):
         one = parse_text_file(SAMPLE / "01_email.txt")
