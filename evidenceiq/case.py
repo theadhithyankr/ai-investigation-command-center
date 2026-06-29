@@ -2,47 +2,27 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict, deque
 
-from evidenceiq.entities import all_entity_names
-from evidenceiq.models import EvidenceItem, PersonLead, RiskSignal
+from evidenceiq.entities import all_entity_names, is_plausible_person_name, leadable_people
+from evidenceiq.models import EvidenceItem, PersonLead, RiskSignal, VictimRecord
 
 
 SCENE_PROXIMITY_TYPES = {"scene_note", "forensic_note", "phone_log", "interview", "report"}
-NON_PERSON_TOKENS = {
-    "access",
-    "analyst",
-    "biologics",
-    "budget",
-    "case",
-    "desk",
-    "document",
-    "email",
-    "entrance",
-    "evidence",
-    "finance",
-    "financial",
-    "forensic",
-    "internal",
-    "interview",
-    "lab",
-    "laboratory",
-    "loading",
-    "log",
-    "manager",
-    "meridian",
-    "note",
-    "office",
-    "officer",
-    "report",
-    "research",
-    "scene",
-    "security",
-    "statement",
-    "timeline",
-    "unknown",
-    "vendor",
-    "witness",
+VICTIM_CONTEXT_TERMS = {
+    "victim",
+    "victims",
+    "deceased",
+    "death",
+    "died",
+    "body",
+    "body found",
+    "bodies found",
+    "found dead",
+    "discovered dead",
+    "discovered deceased",
+    "killed",
+    "murdered",
+    "fatal wound",
 }
-VICTIM_CONTEXT_TERMS = {"victim", "deceased", "death", "died", "body", "killed", "murdered"}
 
 
 class InvestigationCase:
@@ -50,6 +30,7 @@ class InvestigationCase:
         self.items = items
         self.entity_index = self._build_entity_index()
         self.graph = self._build_graph()
+        self.victim_names = self._build_victim_names()
 
     def _build_entity_index(self) -> dict[str, list[EvidenceItem]]:
         index: dict[str, list[EvidenceItem]] = defaultdict(list)
@@ -145,8 +126,8 @@ class InvestigationCase:
             {
                 person
                 for item in self.items
-                for person in item.entities.get("people", [])
-                if self._is_lead_candidate(person, item)
+                for person in leadable_people(item)
+                if self._is_lead_candidate(person, item) and person not in self.victim_names
             }
         )
         for person in people:
@@ -218,16 +199,50 @@ class InvestigationCase:
             reverse=True,
         )[:limit]
 
+    def victims(self) -> list[VictimRecord]:
+        records: list[VictimRecord] = []
+        for name in sorted(self.victim_names):
+            docs = [item for item in self.items if self._mentions_person(name, item)]
+            explicit_docs = [
+                item
+                for item in docs
+                if name in item.entities.get("victims", []) or self._appears_as_victim(name, item)
+            ]
+            reasons = [f"{name} is marked as victim/deceased in {len(explicit_docs) or len(docs)} evidence item(s)."]
+            records.append(
+                VictimRecord(
+                    name=name,
+                    evidence_count=len({item.id for item in docs}),
+                    reasons=tuple(reasons),
+                    citations=tuple(item.citation() for item in (explicit_docs or docs)[:5]),
+                )
+            )
+        return sorted(records, key=lambda record: record.evidence_count, reverse=True)
+
+    def _build_victim_names(self) -> set[str]:
+        victims: set[str] = set()
+        people = {
+            person
+            for item in self.items
+            for person in leadable_people(item)
+            if person.strip()
+        }
+        for item in self.items:
+            victims.update(item.entities.get("victims", []))
+            for person in people:
+                if self._mentions_person(person, item) and self._appears_as_victim(person, item):
+                    victims.add(person)
+        return {victim for victim in victims if victim in people or len(victim.split()) >= 2}
+
     def _is_lead_candidate(self, person: str, item: EvidenceItem) -> bool:
         clean = person.strip()
         if not clean:
             return False
-        tokens = [part.lower().strip(".,:;()[]") for part in clean.split()]
-        if len(tokens) != 2:
-            return False
-        if any(token in NON_PERSON_TOKENS for token in tokens):
+        if not is_plausible_person_name(clean):
             return False
         if clean in item.entities.get("organizations", []):
+            return False
+        if clean in item.entities.get("locations", []):
             return False
         if self._appears_as_victim(clean, item):
             return False
@@ -235,11 +250,23 @@ class InvestigationCase:
 
     def _appears_as_victim(self, person: str, item: EvidenceItem) -> bool:
         haystack = "\n".join([item.title, item.source, item.body])
+        lowered_haystack = haystack.lower()
+        for line in haystack.splitlines():
+            lowered_line = line.lower()
+            if (
+                person.lower() in lowered_line
+                and any(label in lowered_line for label in ("tags:", "victim:", "victims:", "deceased:"))
+                and any(term in lowered_line for term in VICTIM_CONTEXT_TERMS)
+            ):
+                return True
         for sentence in haystack.replace("\n", ". ").split("."):
             lowered = sentence.lower()
             if person.lower() in lowered and any(term in lowered for term in VICTIM_CONTEXT_TERMS):
                 return True
         return False
+
+    def _mentions_person(self, person: str, item: EvidenceItem) -> bool:
+        return person in leadable_people(item) or person.lower() in item.body.lower() or person.lower() in item.title.lower()
 
     def _lead_reasons(
         self,

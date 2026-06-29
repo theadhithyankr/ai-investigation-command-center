@@ -297,6 +297,42 @@ class EvidenceStore:
             conn.close()
         return inserted
 
+    def update_many(self, case_id: str, items: list[EvidenceItem]) -> int:
+        updated = 0
+        conn = self._connect()
+        try:
+            for item in items:
+                before = conn.total_changes
+                conn.execute(
+                    """
+                    UPDATE evidence
+                    SET source = ?, source_type = ?, title = ?, body = ?, timestamp = ?,
+                        sender = ?, recipients = ?, entities = ?, content_hash = ?
+                    WHERE case_id = ? AND id = ?
+                    """,
+                    (
+                        item.source,
+                        item.source_type,
+                        item.title,
+                        item.body,
+                        item.timestamp.isoformat() if item.timestamp else None,
+                        item.sender,
+                        json.dumps(item.recipients),
+                        json.dumps(item.entities),
+                        item.content_hash,
+                        case_id,
+                        item.id,
+                    ),
+                )
+                if conn.total_changes > before:
+                    updated += 1
+            if updated:
+                conn.execute("UPDATE cases SET updated_at = ? WHERE id = ?", (_utc_now(), case_id))
+            conn.commit()
+        finally:
+            conn.close()
+        return updated
+
     def all(self, case_id: str) -> list[EvidenceItem]:
         conn = self._connect()
         try:

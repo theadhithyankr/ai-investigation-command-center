@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from evidenceiq.entities import is_plausible_person_name
 from evidenceiq.models import Citation, SearchResult
 
 
@@ -25,6 +27,9 @@ class LLMClient(Protocol):
         ...
 
     def memo(self, case_name: str, evidence: list[Citation], risks: list[str], timeline: list[str]) -> str | None:
+        ...
+
+    def extract_entities(self, text: str) -> dict[str, list[str]] | None:
         ...
 
 
@@ -56,6 +61,13 @@ class GroqLLMClient:
             return None
         payload = build_memo_prompt(case_name, evidence, risks, timeline)
         return self._complete(payload)
+
+    def extract_entities(self, text: str) -> dict[str, list[str]] | None:
+        if not self.is_configured:
+            return None
+        payload = build_entity_prompt(text)
+        response = self._complete(payload)
+        return parse_entity_response(response)
 
     def _complete(self, payload: PromptPayload) -> str | None:
         try:
@@ -107,6 +119,60 @@ def build_memo_prompt(case_name: str, evidence: list[Citation], risks: list[str]
             f"Risk lines:\n{risk_lines}\n\nTimeline lines:\n{timeline_lines}\n\nMemo:"
         ),
     )
+
+
+def build_entity_prompt(text: str) -> PromptPayload:
+    return PromptPayload(
+        system=(
+            "Extract structured entities from investigation evidence. Return JSON only with keys: "
+            "people, organizations, locations, roles, victims, dates, money, risk_terms. "
+            "People must be human full names only, not organizations, job titles, document titles, budgets, labs, or evidence types. "
+            "Never classify churches, businesses, schools, or government bodies as people, even if they are mentioned in close proximity to a suspect's actions. "
+            "Buildings, facilities, churches, businesses, schools, and government bodies belong in organizations or locations, never people. "
+            "Ignore document titles and headers when deciding people; phrases like Upstairs Guest, Guest Room, Second Street, or Scene Note are locations/titles, not people. "
+            "Do not put physical evidence, relationship labels, descriptors, or official roles in people; examples: Failed Toxin, Family Friend, The Burned, Detective Seaver. "
+            "If a phrase is a role like Finance Officer, Family Friend, Detective Seaver, or Security Contractor, put it in roles, not people. "
+            "If a named person is described as the victim, deceased, body found, murdered, or killed, include them in victims as well as people. "
+            "risk_terms must only include exact suspicious terms present in the text."
+        ),
+        user=f"Evidence text:\n{text[:6000]}\n\nJSON:",
+    )
+
+
+def parse_entity_response(text: str | None) -> dict[str, list[str]] | None:
+    if not text:
+        return None
+    cleaned = text.strip()
+    match = re.search(r"\{.*\}", cleaned, re.S)
+    if match:
+        cleaned = match.group(0)
+    try:
+        raw = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    entities: dict[str, list[str]] = {}
+    for key in ("people", "organizations", "locations", "roles", "victims", "dates", "money", "risk_terms"):
+        value = raw.get(key, [])
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            value = []
+        entities[key] = sorted({str(item).strip() for item in value if str(item).strip()})
+    entities["people"] = [
+        person
+        for person in entities["people"]
+        if (
+            len(person.split()) >= 2
+            and person not in entities["organizations"]
+            and person not in entities["roles"]
+            and person not in entities["locations"]
+            and is_plausible_person_name(person)
+        )
+    ]
+    entities["victims"] = [victim for victim in entities["victims"] if len(victim.split()) >= 2]
+    return entities
 
 
 def validate_cited_text(text: str | None, allowed_ids: set[str]) -> str | None:

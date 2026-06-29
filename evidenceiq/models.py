@@ -74,6 +74,44 @@ class PersonLead:
 
 
 @dataclass(frozen=True)
+class VictimRecord:
+    name: str
+    evidence_count: int
+    reasons: tuple[str, ...]
+    citations: tuple[Citation, ...]
+
+
+@dataclass(frozen=True)
+class MapPin:
+    evidence_id: str
+    title: str
+    source: str
+    timestamp: datetime | None
+    location_label: str
+    latitude: float
+    longitude: float
+    people: tuple[str, ...]
+    excerpt: str
+
+
+@dataclass(frozen=True)
+class WallNode:
+    id: str
+    label: str
+    node_type: str
+    severity: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class WallEdge:
+    source: str
+    target: str
+    relationship: str
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class AgentAnswer:
     question: str
     answer: str

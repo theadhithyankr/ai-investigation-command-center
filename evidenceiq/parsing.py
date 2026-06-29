@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import json
 import re
 from datetime import datetime
 from email import policy
@@ -16,6 +17,10 @@ DATE_PATTERNS = [
     "%d-%m-%Y",
     "%m/%d/%Y",
     "%d/%m/%Y",
+    "%d %B %Y",
+    "%d %b %Y",
+    "%B %d, %Y",
+    "%b %d, %Y",
     "%a, %d %b %Y %H:%M:%S %z",
     "%d %b %Y %H:%M:%S %z",
 ]
@@ -135,6 +140,9 @@ def create_manual_evidence(
     date_value: str | None = None,
     source_person: str | None = None,
     tags: list[str] | None = None,
+    location: str | None = None,
+    latitude: float | str | None = None,
+    longitude: float | str | None = None,
 ) -> EvidenceItem:
     clean_title = title.strip() or "Untitled note"
     clean_body = body.strip()
@@ -146,6 +154,12 @@ def create_manual_evidence(
     ]
     if clean_tags:
         metadata.append(f"Tags: {', '.join(clean_tags)}")
+    clean_location = location.strip() if location else ""
+    if clean_location:
+        metadata.append(f"Location: {clean_location}")
+    coordinates = _format_coordinates(latitude, longitude)
+    if coordinates:
+        metadata.append(f"Coordinates: {coordinates}")
     full_body = "\n".join(metadata + ["", clean_body]).strip()
     item = EvidenceItem(
         id=stable_id(f"manual:{clean_title}:{clean_source}", full_body),
@@ -158,6 +172,159 @@ def create_manual_evidence(
     )
     item.content_hash = content_hash(item.body)
     return item
+
+
+def parse_manual_note_payload(text: str) -> dict[str, object]:
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("Paste JSON or a labeled note first.")
+    if stripped.startswith("{"):
+        return _parse_manual_note_json(stripped)
+    return _parse_labeled_manual_note(stripped)
+
+
+def parse_manual_note_payloads(text: str) -> list[dict[str, object]]:
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("Paste one or more notes first.")
+    if stripped.startswith("["):
+        return _parse_manual_note_json_array(stripped)
+    if stripped.startswith("{"):
+        return [parse_manual_note_payload(stripped)]
+    parts = [part.strip() for part in re.split(r"(?im)^\s*---\s*EVIDENCE ITEM\s*---\s*$", stripped) if part.strip()]
+    if len(parts) <= 1:
+        return [parse_manual_note_payload(stripped)]
+    return [parse_manual_note_payload(part) for part in parts]
+
+
+def _parse_manual_note_json_array(text: str) -> list[dict[str, object]]:
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON: {exc.msg}") from exc
+    if not isinstance(raw, list):
+        raise ValueError("Bulk JSON must be an array of evidence objects.")
+    payloads = []
+    for index, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Evidence item {index} must be a JSON object.")
+        payloads.append(_normalize_manual_note_dict(item))
+    return payloads
+
+
+def _parse_manual_note_json(text: str) -> dict[str, object]:
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON: {exc.msg}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("Manual note JSON must be an object.")
+    return _normalize_manual_note_dict(raw)
+
+
+def _normalize_manual_note_dict(raw: dict) -> dict[str, object]:
+    tags = raw.get("tags", [])
+    if isinstance(tags, str):
+        tags = _split_recipients(tags)
+    elif not isinstance(tags, list):
+        tags = []
+    latitude = str(raw.get("latitude") or raw.get("lat") or "").strip()
+    longitude = str(raw.get("longitude") or raw.get("lon") or raw.get("lng") or "").strip()
+    if raw.get("coordinates") and (not latitude or not longitude):
+        latitude, longitude = _split_coordinates(str(raw.get("coordinates") or ""))
+    return {
+        "title": str(raw.get("title") or "").strip(),
+        "evidence_type": str(raw.get("evidence_type") or raw.get("type") or "other").strip(),
+        "date": str(raw.get("date") or "").strip(),
+        "unknown_date": _is_unknown_date(raw.get("date")),
+        "source_person": str(raw.get("source_person") or raw.get("source") or "").strip(),
+        "tags": [str(tag).strip() for tag in tags if str(tag).strip()],
+        "location": str(raw.get("location") or "").strip(),
+        "latitude": latitude,
+        "longitude": longitude,
+        "body": str(raw.get("body") or "").strip(),
+    }
+
+
+def _parse_labeled_manual_note(text: str) -> dict[str, object]:
+    labels = {
+        "title": ("title", "itle"),
+        "evidence_type": ("evidence type", "type"),
+        "date": ("date",),
+        "source_person": ("source/person", "source", "source person"),
+        "tags": ("tags",),
+        "location": ("location",),
+        "latitude": ("latitude", "lat"),
+        "longitude": ("longitude", "lon", "lng"),
+        "coordinates": ("coordinates", "coords"),
+        "body": ("body",),
+    }
+    found: dict[str, str] = {}
+    current_key: str | None = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        matched_key, value = _match_labeled_line(line, labels)
+        if matched_key:
+            current_key = matched_key
+            found[current_key] = value
+            continue
+        if current_key:
+            separator = "\n" if found[current_key] else ""
+            found[current_key] = f"{found[current_key]}{separator}{line}".strip()
+    tags = _split_recipients(found.get("tags", ""))
+    date_value = found.get("date", "").strip()
+    latitude = found.get("latitude", "").strip()
+    longitude = found.get("longitude", "").strip()
+    if found.get("coordinates") and (not latitude or not longitude):
+        latitude, longitude = _split_coordinates(found.get("coordinates", ""))
+    return {
+        "title": found.get("title", "").strip(),
+        "evidence_type": found.get("evidence_type", "other").strip() or "other",
+        "date": date_value,
+        "unknown_date": _is_unknown_date(date_value),
+        "source_person": found.get("source_person", "").strip(),
+        "tags": tags,
+        "location": found.get("location", "").strip(),
+        "latitude": latitude,
+        "longitude": longitude,
+        "body": found.get("body", "").strip(),
+    }
+
+
+def _match_labeled_line(line: str, labels: dict[str, tuple[str, ...]]) -> tuple[str | None, str]:
+    for key, aliases in labels.items():
+        for alias in aliases:
+            prefix = f"{alias}:"
+            if line.lower().startswith(prefix):
+                return key, line[len(prefix) :].strip()
+    return None, ""
+
+
+def _is_unknown_date(value: object) -> bool:
+    if value is None:
+        return True
+    cleaned = str(value).strip().lower()
+    return not cleaned or cleaned in {"unknown", "unknown date", "n/a", "na", "none"}
+
+
+def _split_coordinates(value: str) -> tuple[str, str]:
+    parts = [part.strip() for part in value.split(",", 1)]
+    if len(parts) != 2:
+        return "", ""
+    return parts[0], parts[1]
+
+
+def _format_coordinates(latitude: float | str | None, longitude: float | str | None) -> str:
+    if latitude in (None, "") or longitude in (None, ""):
+        return ""
+    try:
+        lat_value = float(latitude)
+        lon_value = float(longitude)
+    except (TypeError, ValueError):
+        return ""
+    if not (-90 <= lat_value <= 90 and -180 <= lon_value <= 180):
+        return ""
+    return f"{lat_value:.6f}, {lon_value:.6f}".rstrip("0").rstrip(".")
 
 
 def parse_pdf_file(path: Path) -> EvidenceItem:
